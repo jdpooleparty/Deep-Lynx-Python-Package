@@ -13,11 +13,27 @@
 from __future__ import absolute_import
 
 import unittest
-
+import os
+from dotenv import load_dotenv
 import deep_lynx
-from deep_lynx.models.create_manual_import import CreateManualImport  # noqa: E501
+from deep_lynx.models.create_manual_import import CreateManualImport
 from deep_lynx.rest import ApiException
 
+# Load environment variables
+load_dotenv()
+
+# Initialize configuration and API client
+configuration = deep_lynx.configuration.Configuration()
+configuration.host = os.getenv('BASE_URL')
+api_client = deep_lynx.ApiClient(configuration)
+
+# Initialize authentication API
+auth_api = deep_lynx.AuthenticationApi(api_client)
+api_key = os.getenv('API_KEY')
+api_secret = os.getenv('API_SECRET')
+
+# Get OAuth token
+token = auth_api.retrieve_o_auth_token(x_api_key=api_key, x_api_secret=api_secret, x_api_expiry='1h')
 
 class TestCreateManualImport(unittest.TestCase):
     """CreateManualImport unit test stubs"""
@@ -33,7 +49,6 @@ class TestCreateManualImport(unittest.TestCase):
         # FIXME: construct object with mandatory attributes with example values
         # model = deep_lynx.models.create_manual_import.CreateManualImport()  # noqa: E501
         pass
-
 
 if __name__ == '__main__':
     unittest.main()

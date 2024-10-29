@@ -6,6 +6,8 @@
 .pytest_cache
 poetry.lock
 pyvenv.cfg
+venv312/
+.cursorrules
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
