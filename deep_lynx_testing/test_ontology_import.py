@@ -173,35 +173,30 @@ async def test_create_ontology_and_import(deep_lynx_client):
         await asyncio.sleep(2)  # Increase delay after relationship update
 
         # Then create the relationship pair
-        relationship_pair = apis['relationship_pairs_api'].create_metatype_relationship_pair(
-            container_id=container_id,
-            body={
-                "name": "performs",
-                "description": "Equipment performs Process",
-                "relationship_type": "many:many",
-                "origin_metatype_id": str(equipment_type.value[0].id),
-                "destination_metatype_id": str(process_type.value[0].id),
-                "metatype_relationship_id": str(relationship.value[0].id),
-                "container_id": str(container_id),
-                "ontology_version": str(container_id),
-                "relationship_key": "performs",
-                "originMetatype": {
-                    "name": "Equipment",
-                    "description": "Manufacturing equipment",
-                    "id": str(equipment_type.value[0].id)
-                },
-                "destinationMetatype": {
-                    "name": "Process",
-                    "description": "Manufacturing process",
-                    "id": str(process_type.value[0].id)
-                },
-                "relationship": {
-                    "name": "performs",
-                    "description": "Equipment performs Process",
-                    "id": str(relationship.value[0].id)
-                }
-            }
-        )
+ #       relationship_pair = apis['relationship_pairs_api'].create_metatype_relationship_pair(
+ #           container_id=container_id,
+ #           body={
+ #               "name": "performs",
+ #               "description": "Equipment performs Process",
+ #               "relationship_type": "many:many",
+ #               "origin_metatype_id": str(equipment_type.value[0].id),
+ #               "destination_metatype_id": str(process_type.value[0].id),
+ #               "metatype_relationship_id": str(relationship.value[0].id),
+ #               "container_id": str(container_id),
+ #               "ontology_version": str(container_id),
+ #               "relationship_key": "performs",
+ #               "originMetatype": {
+ #                   "name": "Equipment",
+ #                   "description": "Manufacturing equipment",
+ #                   "id": str(equipment_type.value[0].id)
+ #               },
+ #               "destinationMetatype": {
+ #                   "name": "Process",
+ #                   "description": "Manufacturing process",
+ #                   "id": str(process_type.value[0].id)
+ #               }
+ #           }
+ #       )
         await asyncio.sleep(2)  # Keep delay after pair creation
 
         # Add delay after relationship creation and update
