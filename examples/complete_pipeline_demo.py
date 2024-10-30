@@ -187,8 +187,55 @@ async def run_complete_pipeline():
         print(f"Container Name: {container_name}")
         print(f"Container ID: {container_id}")
         print(f"Data Source ID: {datasource_id}")
+        
+        # Wait for imports to complete
+        try:
+            max_retries = 10
+            retry_delay = 2  # seconds
+            
+            for attempt in range(max_retries):
+                imports = datasources_api.list_imports_for_data_source(
+                    container_id=container_id,
+                    data_source_id=datasource_id
+                )
+                
+                if not imports.value:
+                    logger.warning(f"No imports found on attempt {attempt + 1}")
+                    await asyncio.sleep(retry_delay)
+                    continue
+                
+                all_complete = all(
+                    getattr(imp, 'status', '') == 'completed' 
+                    for imp in imports.value
+                )
+                
+                if all_complete:
+                    logger.info("All imports completed successfully")
+                    break
+                    
+                logger.info(f"Waiting for imports to complete (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.warning("Import completion check timed out")
+                
+        except Exception as e:
+            logger.error(f"Error checking import status: {e}")
+            
         print("\nYou can view this data in the Deep Lynx UI at:")
-        print(f"{base_config.configuration.host}/containers/{container_id}/graph")
+        print(f"{base_config.configuration.host}/containers/{container_id}/data")
+        print("\nOr query the data using:")
+        print(f"{base_config.configuration.host}/containers/{container_id}/data/query")
+        
+        # Check container status
+        try:
+            container = containers_api.retrieve_container(container_id)
+            if hasattr(container, 'value') and container.value:
+                if getattr(container.value, 'archived', False):
+                    print("\nWARNING: This container is archived. Please unarchive it to view the data.")
+            else:
+                print("\nWARNING: Could not verify container status: No container data returned")
+        except Exception as e:
+            print(f"\nWARNING: Could not verify container status: {e}")
     else:
         print("\nPipeline failed! Check logs for details.")
 
