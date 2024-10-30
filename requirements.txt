@@ -1,8 +1,19 @@
+# Core dependencies
 certifi >= 14.05.14
 six >= 1.10
 python_dateutil >= 2.5.3
 setuptools >= 21.0.0
 urllib3 >= 1.15.1
-deep_lynx
-python-dotenv
+deep_lynx  # API key/secret authentication
+
+# Environment and configuration
+python-dotenv  # For secure API key management
+
+# Testing
 pytest
+
+# Async support
+aiohttp
+
+# Data processing
+pandas
