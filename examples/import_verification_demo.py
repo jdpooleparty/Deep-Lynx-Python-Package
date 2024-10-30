@@ -108,44 +108,57 @@ async def create_container_with_keys(containers_api: ContainersApi, users_api: U
     """
     try:
         # Create container
-        container_request = CreateContainerRequest(
-            name=container_name,
-            description=f"Container created by import verification demo at {datetime.now()}",
-            is_public=False
+        container_response = containers_api.create_container(
+            body=CreateContainerRequest(name=container_name)
         )
-        container_response = containers_api.create_container(container_request)
-        
-        if not hasattr(container_response, 'value') or not container_response.value:
-            raise Exception("No container data in response")
+        if not hasattr(container_response, 'value'):
+            raise Exception("Container creation response missing value")
             
-        container_id = container_response.value[0].id
-        logger.info(f"Created container: {container_name} (ID: {container_id})")
+        container_id = container_response.value.id
         
-        # Create service user for the container
-        service_user = users_api.create_service_user(
-            container_id=container_id,
-            body={"name": f"{container_name}_service_user"}
+        # Create service user for container
+        service_user = users_api.create_service_user(container_id)
+        if not hasattr(service_user, 'value'):
+            raise Exception("Service user creation response missing value")
+            
+        return (
+            container_id,
+            service_user.value.key,
+            service_user.value.secret
+        )
+    except ApiException as e:
+        logger.error(f"Failed to create container or service user: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in container creation: {e}")
+        raise
+
+async def verify_credentials(base_config: DeepLynxConfig) -> bool:
+    """Verify that credentials have correct container access"""
+    try:
+        auth_api = base_config.get_auth_api()
+        # Use the environment variables directly since they're already validated
+        token_response = auth_api.retrieve_o_auth_token(
+            x_api_key=os.getenv('API_KEY'),
+            x_api_secret=os.getenv('API_SECRET')
         )
         
-        if not hasattr(service_user, 'value') or not service_user.value:
-            raise Exception("No service user data in response")
+        if not hasattr(token_response, 'value') or not token_response.value:
+            return False
             
-        service_user_id = service_user.value.id
+        # Test container access
+        api_client = ApiClient(base_config.configuration)
+        containers_api = ContainersApi(api_client)
+        containers = containers_api.list_containers()
         
-        # Generate key pair for service user
-        key_pair = users_api.create_service_user_key_pair(
-            container_id=container_id,
-            service_user_id=service_user_id
-        )
-        
-        if not hasattr(key_pair, 'value') or not key_pair.value:
-            raise Exception("No key pair data in response")
+        if not hasattr(containers, 'value'):
+            return False
             
-        return container_id, key_pair.value.key, key_pair.value.secret
+        return True
         
     except ApiException as e:
-        logger.error(f"API error creating container and keys: {e}")
-        raise
+        logger.error(f"Credential verification failed: {e}")
+        return False
 
 async def run_import_verification():
     """Demo script to verify data imports and query results"""
@@ -182,16 +195,20 @@ async def run_import_verification():
     }
     
     if not env_vars['API_KEY'] or not env_vars['API_SECRET']:
-        print("\nMissing API credentials. Please check your .env file:")
-        print("1. Ensure .env file exists in project root")
-        print("2. File should contain:")
-        print("   API_KEY=your_api_key")
-        print("   API_SECRET=your_api_secret")
-        print("   BASE_URL=http://localhost:8090 (optional)")
-        print("\n3. Current values:")
-        print(f"   BASE_URL: {env_vars['BASE_URL']}")
-        print(f"   API_KEY: {'[SET]' if env_vars['API_KEY'] else '[MISSING]'}")
-        print(f"   API_SECRET: {'[SET]' if env_vars['API_SECRET'] else '[MISSING]'}")
+        error_msg = (
+            "\nMissing API credentials. Please check your .env file:\n"
+            "1. Ensure .env file exists in project root\n"
+            "2. File should contain:\n"
+            "   API_KEY=your_api_key\n"
+            "   API_SECRET=your_api_secret\n"
+            "   BASE_URL=http://localhost:8090 (optional)\n"
+            f"\n3. Current values:\n"
+            f"   BASE_URL: {env_vars['BASE_URL']}\n"
+            f"   API_KEY: {'[SET]' if env_vars['API_KEY'] else '[MISSING]'}\n"
+            f"   API_SECRET: {'[SET]' if env_vars['API_SECRET'] else '[MISSING]'}"
+        )
+        logger.error("Missing API credentials")
+        print(error_msg)
         return
 
     try:
@@ -202,23 +219,42 @@ async def run_import_verification():
             api_secret=env_vars['API_SECRET']
         )
         
-        # Get API clients
-        containers_api = ContainersApi(ApiClient(base_config.configuration))
-        users_api = UsersApi(ApiClient(base_config.configuration))
-        
-        # Create new container with service user keys
-        container_name = f"verification_demo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # Verify credentials have correct access
+        if not await verify_credentials(base_config):
+            error_msg = (
+                "\nCredential verification failed:\n"
+                "1. Credentials exist but lack container access\n"
+                "2. Please ensure credentials have container admin permissions\n"
+                "3. Try creating a new container and using its service user credentials\n"
+                "4. Current credentials may be for a different container"
+            )
+            logger.error(error_msg)
+            print(f"\nAccess Error: {error_msg}")
+            return
+
+        # Verify authentication before proceeding
+        auth_api = base_config.get_auth_api()
         try:
+            token_response = auth_api.retrieve_o_auth_token(
+                x_api_key=env_vars['API_KEY'],
+                x_api_secret=env_vars['API_SECRET']
+            )
+            if not hasattr(token_response, 'value') or not token_response.value:
+                raise ApiException(status=401, reason="Invalid token response")
+            logger.info("Successfully authenticated with provided credentials")
+            
+            # Create API clients with authenticated configuration
+            api_client = ApiClient(base_config.configuration)
+            containers_api = ContainersApi(api_client)
+            users_api = UsersApi(api_client)
+            
+            # Create new container with service user keys
+            container_name = f"verification_demo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             container_id, new_api_key, new_api_secret = await create_container_with_keys(
                 containers_api, 
                 users_api, 
                 container_name
             )
-            print("\nCreated new container with credentials:")
-            print(f"Container ID: {container_id}")
-            print(f"API Key: {new_api_key}")
-            print(f"API Secret: {new_api_secret}")
-            print("\nIMPORTANT: Save these credentials! The API secret cannot be retrieved later.")
             
             # Update configuration to use new credentials
             base_config = DeepLynxConfig(
@@ -231,31 +267,31 @@ async def run_import_verification():
             auth_api = base_config.get_auth_api()
             try:
                 token_response = auth_api.retrieve_o_auth_token(
-                    x_api_key=new_api_key,  # Use new credentials here
-                    x_api_secret=new_api_secret  # Use new credentials here
+                    x_api_key=new_api_key,
+                    x_api_secret=new_api_secret
                 )
                 if not hasattr(token_response, 'value') or not token_response.value:
                     raise ApiException(status=401, reason="Invalid token response")
                 logger.info("Successfully authenticated with new service user credentials")
-            except ApiException as e:
-                if e.status == 401:
+            except ApiException as auth_e:
+                if auth_e.status == 401:
                     error_msg = (
                         "Authentication failed with new service user credentials:\n"
                         "1. Container created successfully but authentication failed\n"
-                        "2. Container ID: " + container_id + "\n"
+                        f"2. Container ID: {container_id}\n"
                         "3. Please verify the service user was created correctly"
                     )
                     logger.error(error_msg)
                     print(f"\nAuthentication Error: {error_msg}")
                     return
-                raise e
+                raise auth_e
 
             # Get new API clients with updated configuration
             containers_api = ContainersApi(ApiClient(base_config.configuration))
             datasources_api = DataSourcesApi(ApiClient(base_config.configuration))
             
-            # List all containers and their data sources
             try:
+                # List all containers and their data sources
                 containers = containers_api.list_containers()
                 
                 if not hasattr(containers, 'value') or not containers.value:
@@ -303,11 +339,24 @@ async def run_import_verification():
                                     else:
                                         print("Import verification failed or timed out")
                                         
-                        except ApiException as e:
-                            logger.error(f"Error listing data sources: {e}")
+                        except ApiException as ds_e:
+                            logger.error(f"Error listing data sources: {ds_e}")
                             
-            except ApiException as e:
-                logger.error(f"Error listing containers: {e}")
+            except ApiException as list_e:
+                logger.error(f"Error listing containers: {list_e}")
+                
+        except ApiException as auth_e:
+            if auth_e.status == 401:
+                error_msg = (
+                    "\nAuthentication failed with provided credentials:\n"
+                    "1. API key and secret were found but are invalid\n"
+                    "2. Please verify your credentials in .env file\n"
+                    "3. Ensure you have proper permissions in Deep Lynx"
+                )
+                logger.error(error_msg)
+                print(f"\nAuthentication Error: {error_msg}")
+                return
+            raise auth_e
 
     except ApiException as e:
         logger.error(f"API error occurred: {e}")

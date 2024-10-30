@@ -1,0 +1,6 @@
+product_id,product_name,product_type,batch_number,production_line,ingredients,quantity,unit,production_date,quality_score
+P001,Organic Cola,Beverage,B123,Line1,"Water|Sugar|Natural Flavors",1000,liters,2024-03-15,95
+P002,Potato Chips,Snack,B124,Line2,"Potatoes|Vegetable Oil|Salt",500,kg,2024-03-15,92
+P003,Energy Drink,Beverage,B125,Line1,"Water|Caffeine|Taurine|B-Vitamins",800,liters,2024-03-15,94
+P004,Chocolate Bar,Confectionery,B126,Line3,"Cocoa|Sugar|Milk Powder",300,kg,2024-03-15,96
+P005,Fruit Juice,Beverage,B127,Line1,"Apple|Orange|Grape",600,liters,2024-03-15,93 
