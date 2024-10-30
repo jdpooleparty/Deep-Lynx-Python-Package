@@ -1,0 +1,6 @@
+id,equipment_name,process_type,duration,status
+EQ001,CNC Machine,Machining,120,active
+EQ002,3D Printer,Additive,240,active
+EQ003,Robot Arm,Assembly,60,maintenance
+EQ004,Laser Cutter,Cutting,90,active
+EQ005,Inspection Station,QC,30,active 
