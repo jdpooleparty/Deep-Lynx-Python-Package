@@ -2,6 +2,7 @@ from typing import Dict, Any, List, Optional
 import pandas as pd
 from dataclasses import dataclass
 from enum import Enum
+import re
 
 class DataType(Enum):
     STRING = "string"
@@ -42,25 +43,30 @@ class SchemaValidator:
                 continue
                 
             if field.name in df.columns:
-                # First validate data type
+                # Validate type
                 type_errors = self._validate_type(df[field.name], field)
                 if type_errors:
                     errors["type_mismatch"].extend(type_errors)
                     continue  # Skip constraint validation if type is invalid
                 
-                # Then validate constraints if any and if type validation passed
+                # Validate constraints if present
                 if field.constraints:
                     constraint_errors = self._validate_constraints(
-                        df[field.name], 
+                        df[field.name],
                         field.constraints,
                         field.data_type
                     )
                     if constraint_errors:
                         errors["constraint"].extend(constraint_errors)
         
+        # Only return non-empty error categories
         return {k: v for k, v in errors.items() if v}
     
-    def _validate_type(self, series: pd.Series, field: SchemaField) -> List[str]:
+    def _validate_type(
+        self,
+        series: pd.Series,
+        field: SchemaField
+    ) -> List[str]:
         """Validate data type of a series"""
         errors = []
         try:
@@ -113,14 +119,18 @@ class SchemaValidator:
                     errors.append(
                         f"Values in field '{series.name}' are above maximum: {value}"
                     )
-            elif constraint == "unique":
-                if value and not series.is_unique:
+            elif constraint == "unique" and value:
+                duplicates = series[series.duplicated()].unique()
+                if len(duplicates) > 0:
                     errors.append(
-                        f"Field '{series.name}' contains duplicate values"
+                        f"Field '{series.name}' violates unique constraint with duplicate values: {list(duplicates)}"
                     )
-            elif constraint == "pattern":
-                if not all(series.str.match(value)):
+            elif constraint == "pattern" and data_type == DataType.STRING:
+                pattern = re.compile(value)
+                invalid = series[~series.str.match(pattern)]
+                if len(invalid) > 0:
                     errors.append(
-                        f"Values in field '{series.name}' don't match pattern: {value}"
+                        f"Values in field '{series.name}' do not match pattern {value}: {list(invalid)}"
                     )
+        
         return errors
