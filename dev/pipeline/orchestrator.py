@@ -1,56 +1,50 @@
 from typing import Optional
 import logging
-from pathlib import Path
+import asyncio
 from datetime import datetime
-
 from .state import PipelineState, PipelineStatus
 from .base import DataSource, DataTransformer, DataLoader
-from ..utils.logging import setup_pipeline_logging
+
+logger = logging.getLogger('deep_lynx_pipeline')
 
 class PipelineOrchestrator:
-    """Orchestrates the ETL pipeline flow"""
+    """Orchestrate pipeline execution"""
     def __init__(
         self,
         source: DataSource,
         transformer: DataTransformer,
         loader: DataLoader,
-        log_file: Optional[Path] = None
+        state: PipelineState
     ):
         self.source = source
         self.transformer = transformer
         self.loader = loader
-        self.logger = setup_pipeline_logging(log_file=log_file)
-        self.state = PipelineState(status=PipelineStatus.INITIALIZED)
-        
-    async def execute(self) -> bool:
-        """Execute the complete pipeline"""
+        self.state = state
+
+    async def run(self) -> bool:
+        """Run the complete pipeline"""
         try:
             self.state.status = PipelineStatus.RUNNING
             self.state.start_time = datetime.now()
-            self.logger.info("Starting pipeline execution")
-            
-            # Process each batch
+
             for batch in self.source.extract():
-                # Transform data
                 transformed_data = self.transformer.transform(batch)
+                success = await self.loader.load(transformed_data)
                 
-                # Load data
-                success = self.loader.load(transformed_data)
                 if not success:
+                    logger.error("Failed to load batch")
                     raise Exception("Failed to load batch")
-                    
+                
                 self.state.records_processed += len(batch)
-                self.logger.info(f"Processed batch of {len(batch)} records")
-            
-            # Complete pipeline
+                logger.info(f"Processed batch of {len(batch)} records")
+
             self.state.status = PipelineStatus.COMPLETED
             self.state.end_time = datetime.now()
-            self.logger.info("Pipeline execution completed successfully")
+            logger.info("Pipeline execution completed successfully")
             return True
-            
+
         except Exception as e:
             self.state.status = PipelineStatus.FAILED
-            self.state.end_time = datetime.now()
             self.state.errors["pipeline_error"] = str(e)
-            self.logger.error(f"Pipeline failed: {e}")
-            return False 
+            logger.error(f"Pipeline failed: {e}")
+            raise

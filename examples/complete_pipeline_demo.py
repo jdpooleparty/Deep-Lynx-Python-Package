@@ -1,15 +1,47 @@
 from pathlib import Path
+import asyncio
+import os
+import logging
+from dotenv import load_dotenv
+from deep_lynx import (
+    CreateContainerRequest,
+    CreateDataSourceRequest,
+    Configuration,
+    ApiClient
+)
+from deep_lynx.rest import ApiException
 from dev.pipeline.sources.csv_source import CSVDataSource
 from dev.pipeline.transformers.base_transformer import DeepLynxTransformer
 from dev.pipeline.loaders.deep_lynx_loader import DeepLynxLoader
 from dev.pipeline.orchestrator import PipelineOrchestrator
 from dev.pipeline_config import PipelineConfig
 from dev.config import DeepLynxConfig
+from dev.utils.logging import setup_pipeline_logging
+from dev.pipeline.state import PipelineState, PipelineStatus
+from datetime import datetime
 
-def run_complete_pipeline():
+# Set up logging
+logger = logging.getLogger('deep_lynx_pipeline')
+
+async def run_complete_pipeline():
     """Demonstrate complete pipeline with all components"""
-    # Initialize configuration
-    base_config = DeepLynxConfig()
+    # Set up logging first
+    log_file = Path("logs/complete_pipeline.log")
+    log_file.parent.mkdir(exist_ok=True)  # Create logs directory if it doesn't exist
+    logger = setup_pipeline_logging(log_file=log_file)
+    logger.info("Starting pipeline execution")
+    
+    # Load environment variables
+    load_dotenv()
+    
+    # Initialize configuration with auth
+    base_config = DeepLynxConfig(
+        base_url=os.getenv('BASE_URL', 'http://localhost:8090'),
+        api_key=os.getenv('API_KEY'),
+        api_secret=os.getenv('API_SECRET')
+    )
+    
+    # No need for separate token retrieval since it's handled in DeepLynxConfig
     pipeline_config = PipelineConfig(base_config)
     
     # Configure components
@@ -21,7 +53,7 @@ def run_complete_pipeline():
     transformer = DeepLynxTransformer({
         "column_mappings": {
             "equipment_name": "name",
-            "process_type": "type",
+            "process_type": "metatype",
             "duration": "process_duration"
         },
         "type_conversions": {
@@ -29,23 +61,137 @@ def run_complete_pipeline():
         }
     })
     
-    loader = DeepLynxLoader(pipeline_config, "test-container-id")
+    # Create or get container and data source
+    containers_api = pipeline_config.get_containers_api()
+    datasources_api = pipeline_config.get_datasources_api()
     
-    # Create orchestrator
+    # Generate unique container name with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    container_name = f"Pipeline_Demo_Container_{timestamp}"
+    
+    # Try to find existing container
+    container_id = None
+    try:
+        containers = containers_api.list_containers()
+        if hasattr(containers, 'value') and containers.value:
+            for container in containers.value:
+                # Look for any non-archived container with our prefix
+                if (hasattr(container, 'name') and 
+                    container.name.startswith("Pipeline_Demo_Container_") and
+                    not getattr(container, 'archived', False)):
+                    container_id = container.id
+                    logger.info(f"Found existing container with ID: {container_id}")
+                    break
+    except Exception as e:
+        logger.warning(f"Error checking existing containers: {e}")
+    
+    # Create container if no suitable one exists
+    if not container_id:
+        try:
+            container_response = containers_api.create_container(
+                CreateContainerRequest(
+                    name=container_name,
+                    description="Container for pipeline demo"
+                )
+            )
+            if hasattr(container_response, 'value') and container_response.value:
+                container_id = container_response.value[0].id
+                logger.info(f"Created new container with ID: {container_id}")
+            else:
+                raise Exception("Container creation response missing value")
+        except ApiException as e:
+            # Archive old containers if we hit the duplicate name error
+            if "already exists" in str(e):
+                try:
+                    old_containers = containers_api.list_containers()
+                    for container in old_containers.value:
+                        if (container.name.startswith("Pipeline_Demo_Container_") and
+                            not getattr(container, 'archived', False)):
+                            try:
+                                containers_api.archive_container(container.id)
+                                logger.info(f"Archived old container: {container.name}")
+                            except Exception as archive_error:
+                                logger.warning(f"Failed to archive container {container.name}: {archive_error}")
+                    
+                    # Try creating container again with new name
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    container_name = f"Pipeline_Demo_Container_{timestamp}"
+                    container_response = containers_api.create_container(
+                        CreateContainerRequest(
+                            name=container_name,
+                            description="Container for pipeline demo"
+                        )
+                    )
+                    container_id = container_response.value[0].id
+                    logger.info(f"Created new container with ID: {container_id} after cleanup")
+                except Exception as retry_error:
+                    logger.error(f"Failed to create container after cleanup: {retry_error}")
+                    raise Exception(f"Failed to create container after cleanup: {retry_error}")
+            else:
+                logger.error(f"Failed to create container: {e}")
+                raise Exception(f"Failed to create container: {e}")
+    
+    # Try to find existing data source
+    datasource_id = None
+    try:
+        datasources = datasources_api.list_data_sources(container_id=container_id)
+        if hasattr(datasources, 'value') and datasources.value:
+            for datasource in datasources.value:
+                if datasource.name == "Pipeline Demo Source":
+                    datasource_id = datasource.id
+                    logger.info(f"Found existing data source with ID: {datasource_id}")
+                    break
+    except Exception as e:
+        logger.warning(f"Error checking existing data sources: {e}")
+    
+    # Create data source if it doesn't exist
+    if not datasource_id:
+        try:
+            datasource_response = datasources_api.create_data_source(
+                container_id=container_id,
+                body=CreateDataSourceRequest(
+                    name="Pipeline Demo Source",
+                    adapter_type="standard",
+                    active=True
+                )
+            )
+            if hasattr(datasource_response, 'value'):
+                datasource_id = datasource_response.value.id
+                logger.info(f"Created new data source with ID: {datasource_id}")
+            else:
+                raise Exception("Data source creation response missing value")
+        except ApiException as e:
+            logger.error(f"Failed to create data source: {e}")
+            raise Exception(f"Failed to create data source: {e}")
+    
+    # Initialize loader with container and data source IDs
+    loader = DeepLynxLoader(
+        pipeline_config,
+        container_id=container_id,
+        data_source_id=datasource_id
+    )
+    
+    # Create orchestrator with correct parameters
     orchestrator = PipelineOrchestrator(
         source=source,
         transformer=transformer,
         loader=loader,
-        log_file=Path("logs/complete_pipeline.log")
+        state=PipelineState(status=PipelineStatus.INITIALIZED)  # Add state parameter
     )
     
     # Execute pipeline
-    success = orchestrator.execute()
+    success = await orchestrator.run()  # Use run() instead of execute()
     
     if success:
         print("\nPipeline completed successfully!")
+        print(f"Container Name: {container_name}")
+        print(f"Container ID: {container_id}")
+        print(f"Data Source ID: {datasource_id}")
+        print("\nYou can view this data in the Deep Lynx UI at:")
+        print(f"{base_config.configuration.host}/containers/{container_id}/graph")
     else:
         print("\nPipeline failed! Check logs for details.")
 
 if __name__ == "__main__":
-    run_complete_pipeline() 
+    # Run the async function using asyncio
+    asyncio.run(run_complete_pipeline())
